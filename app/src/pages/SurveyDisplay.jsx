@@ -6,12 +6,11 @@ import { socket } from '../socket'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4040'
 
-// URLs da API de Validação de Pulseiras
 const VALIDATION_API = {
   SP: import.meta.env.VITE_API_URL_SP || 'https://dedalosadm2-3dab78314381.herokuapp.com',
   BH: import.meta.env.VITE_API_URL_BH || 'https://dedalosadm2bh-09d55dca461e.herokuapp.com'
 }
-const MASTER_CODE = '0108' // Código mestre de fallback
+const MASTER_CODE = '0108'
 
 const EMOJIS = ['😡', '😕', '😐', '🙂', '😍']
 
@@ -29,32 +28,27 @@ export default function SurveyDisplay() {
     return 'SP'
   })
 
-  // Estados principais
   const [config, setConfig] = useState(null)
-  const [viewState, setViewState] = useState('idle') // idle, survey, success
+  const [viewState, setViewState] = useState('idle')
   const [loading, setLoading] = useState(true)
   
-  // Controle da Modal de Pulseira
   const [isBraceletModalOpen, setIsBraceletModalOpen] = useState(false)
   const [bracelet, setBracelet] = useState('')
   const [isValidatingBracelet, setIsValidatingBracelet] = useState(false)
   const [braceletError, setBraceletError] = useState(false)
 
-  // Controle da Pesquisa e Cupom
   const [currentPageIndex, setCurrentPageIndex] = useState(0)
   const [answers, setAnswers] = useState({})
   const [clientCode, setClientCode] = useState(null)
+  
+  const [couponStatus, setCouponStatus] = useState('loading')
   const [generatedCoupon, setGeneratedCoupon] = useState(null)
   const [copied, setCopied] = useState(false)
 
-  // Segurança e Timers
   const [exitClicks, setExitClicks] = useState(0)
   const idleTimerRef = useRef(null)
   const successTimerRef = useRef(null)
 
-  // ==========================================
-  // CONTROLE DO LOGOUT FANTASMA (5 CLIQUES)
-  // ==========================================
   useEffect(() => {
     let timeout
     if (exitClicks > 0 && exitClicks < 5) {
@@ -67,9 +61,6 @@ export default function SurveyDisplay() {
     return () => clearTimeout(timeout)
   }, [exitClicks])
 
-  // ==========================================
-  // BUSCA A PESQUISA ATIVA
-  // ==========================================
   const fetchActiveSurvey = useCallback(async () => {
     try {
       let activePreset = null
@@ -113,9 +104,6 @@ export default function SurveyDisplay() {
     }
   }, [fetchActiveSurvey, viewState, isBraceletModalOpen])
 
-  // ==========================================
-  // VALIDAÇÃO DA PULSEIRA
-  // ==========================================
   const validateCustomer = async (code) => {
     if (!code) return false
     const cleanCode = code.toString().trim()
@@ -146,11 +134,17 @@ export default function SurveyDisplay() {
 
     if (isValid) {
       if (navigator.vibrate) navigator.vibrate(50)
+      
+      const parsedClientCode = bracelet.trim().toUpperCase()
+      
+      api.post('/api/survey/prepare', { unit: currentUnit, client_code: parsedClientCode }).catch(() => {})
+
       setAnswers({})
       setCurrentPageIndex(0)
       setGeneratedCoupon(null)
+      setCouponStatus('loading')
       setCopied(false)
-      setClientCode(bracelet.trim().toUpperCase())
+      setClientCode(parsedClientCode)
       setIsBraceletModalOpen(false)
       setBracelet('')
       setViewState('survey')
@@ -161,9 +155,6 @@ export default function SurveyDisplay() {
     }
   }
 
-  // ==========================================
-  // GERENCIAMENTO DE SESSÃO E TIMERS
-  // ==========================================
   const resetToIdle = useCallback(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
     if (successTimerRef.current) clearTimeout(successTimerRef.current)
@@ -174,6 +165,7 @@ export default function SurveyDisplay() {
     setBracelet('')
     setBraceletError(false)
     setGeneratedCoupon(null)
+    setCouponStatus('loading')
     setCopied(false)
   }, [])
 
@@ -197,9 +189,6 @@ export default function SurveyDisplay() {
     resetIdleTimer()
   }, [answers, currentPageIndex, viewState, bracelet, isBraceletModalOpen, resetIdleTimer])
 
-  // ==========================================
-  // FLUXO DE VOTAÇÃO
-  // ==========================================
   const handleIdleClick = () => {
     if (!config) return
     if (navigator.vibrate) navigator.vibrate(50)
@@ -214,9 +203,9 @@ export default function SurveyDisplay() {
   const submitSurvey = useCallback(async () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
     
-    // 1. Muda a tela IMEDIATAMENTE para mostrar a comemoração ao cliente
     setViewState('success')
-    setGeneratedCoupon(null) // Isso fará aparecer "GERANDO..." na tela de sucesso
+    setCouponStatus('loading')
+    setGeneratedCoupon(null)
 
     try {
       const payloadAnswers = Object.entries(answers).map(([qId, val]) => ({
@@ -224,7 +213,6 @@ export default function SurveyDisplay() {
         answer_value: val.toString()
       }))
 
-      // 2. Faz a requisição em segundo plano
       const response = await api.post('/api/survey/responses', {
         unit: currentUnit,
         preset_id: config.id,
@@ -232,24 +220,22 @@ export default function SurveyDisplay() {
         answers: payloadAnswers
       })
 
-      // 3. Atualiza o cupom visualmente quando a API terminar de processar
-      const receivedCoupon = response.data?.coupon || `DESC10-${Math.random().toString(36).substring(2, 6).toUpperCase()}`
-      setGeneratedCoupon(receivedCoupon)
+      if (response.data.couponFailed || !response.data.coupon) {
+        setCouponStatus('error')
+      } else {
+        setGeneratedCoupon(response.data.coupon)
+        setCouponStatus('success')
+      }
 
     } catch (error) {
-      console.error("Erro ao enviar respostas", error)
-      // Se der erro na API ou na internet, a UX do cliente continua intacta
-      // Criamos um cupom provisório de fallback direto no frontend
-      setGeneratedCoupon(`DESC10-${Math.random().toString(36).substring(2, 6).toUpperCase()}`)
+      setCouponStatus('error')
     } finally {
-      // De qualquer forma (Sucesso ou Erro), mantém a tela aberta por 20s e depois reseta
       successTimerRef.current = setTimeout(() => {
         resetToIdle()
       }, 20000)
     }
   }, [answers, clientCode, config, currentUnit, resetToIdle])
 
-  // Lógica de avanço automático
   useEffect(() => {
     if (viewState !== 'survey' || !config) return
 
@@ -279,9 +265,6 @@ export default function SurveyDisplay() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  // ==========================================
-  // RENDERIZADORES DE PERGUNTAS
-  // ==========================================
   const renderQuestionInput = (question) => {
     const currentValue = answers[question.id]
 
@@ -384,9 +367,6 @@ export default function SurveyDisplay() {
     }
   }
 
-  // ==========================================
-  // RENDER PRINCIPAL
-  // ==========================================
   if (loading) {
     return (
       <div className="min-h-screen bg-[#050505] flex items-center justify-center text-white/50 animate-pulse font-black tracking-widest uppercase text-xs">
@@ -410,7 +390,6 @@ export default function SurveyDisplay() {
 
       <AnimatePresence mode="wait">
         
-        {/* ===================== TELA IDLE ===================== */}
         {viewState === 'idle' && (
           <motion.div 
             key="idle"
@@ -465,7 +444,6 @@ export default function SurveyDisplay() {
           </motion.div>
         )}
 
-        {/* ===================== TELA SURVEY ===================== */}
         {viewState === 'survey' && (
           <motion.main 
             key="survey"
@@ -508,7 +486,6 @@ export default function SurveyDisplay() {
           </motion.main>
         )}
 
-        {/* ===================== TELA SUCCESS (COM CUPOM) ===================== */}
         {viewState === 'success' && (
           <motion.div 
             key="success"
@@ -516,55 +493,69 @@ export default function SurveyDisplay() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 1.05 }}
             className="relative z-10 w-full max-w-[600px] h-[90vh] bg-black/60 backdrop-blur-md rounded-[2.5rem] border-[3px] border-transparent bg-clip-padding flex flex-col shadow-2xl justify-between p-6 sm:p-8 text-center"
-            style={{ borderImage: 'linear-gradient(135deg, #ff4d00, #ffcc00) 1', borderRadius: '2.5rem' }}
+            style={{ 
+              borderImage: couponStatus === 'error' ? 'linear-gradient(135deg, #ef4444, #9f1239) 1' : 'linear-gradient(135deg, #ff4d00, #ffcc00) 1', 
+              borderRadius: '2.5rem' 
+            }}
           >
             <div className="mt-4">
-              <h1 className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-600 mb-1 drop-shadow-sm uppercase">
-                ISSO AÍ!
+              <h1 className={`text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r mb-1 drop-shadow-sm uppercase ${couponStatus === 'error' ? 'from-red-400 to-rose-600' : 'from-green-400 to-emerald-600'}`}>
+                {couponStatus === 'error' ? 'AVALIAÇÃO SALVA' : 'ISSO AÍ!'}
               </h1>
               <p className="text-base sm:text-lg text-gray-400 font-medium">Sua avaliação foi registrada.</p>
             </div>
 
             <div className="flex-1 flex flex-col items-center justify-center gap-4 my-4">
-              <div className="bg-[#151515] border border-orange-500/30 rounded-[2rem] p-6 shadow-[0_0_30px_rgba(249,115,22,0.15)] flex flex-col items-center w-full max-w-[320px] relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-orange-500 to-yellow-500" />
-                
-                <h3 className="text-xs font-black uppercase tracking-widest text-orange-500 mb-4">Sua Recompensa</h3>
-                
-                <div className="w-36 h-36 bg-white rounded-2xl mb-4 p-2 flex items-center justify-center">
-                  <div className="w-full h-full border-2 border-dashed border-gray-300 rounded-xl flex items-center justify-center flex-col gap-1">
-                    <QrCode size={36} className="text-gray-300" />
-                    <span className="text-[8px] font-bold text-gray-400 uppercase tracking-wider text-center px-1">QR Code<br/>Em Breve</span>
-                  </div>
-                </div>
-
-                <div className="w-full bg-black/50 rounded-xl py-3 px-4 border border-white/5 flex items-center justify-between group">
-                  <p className="text-2xl font-black text-white tracking-widest font-mono select-all">
-                    {generatedCoupon || (
-                      <span className="flex items-center gap-2">
-                        <Loader2 size={24} className="animate-spin text-orange-500" /> GERANDO
-                      </span>
-                    )}
+              {couponStatus === 'error' ? (
+                <div className="bg-[#151515] border border-red-500/50 rounded-[2rem] p-6 shadow-[0_0_30px_rgba(225,29,72,0.2)] flex flex-col items-center w-full max-w-[320px] relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-red-500 to-rose-600" />
+                  <AlertCircle size={48} className="text-red-500 mb-4" />
+                  <h3 className="text-lg font-black uppercase tracking-widest text-red-500 mb-2">Sistema Indisponível</h3>
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-widest text-center px-2">
+                    Não foi possível emitir seu VIP digital. Por favor, avise a recepção apresentando esta tela.
                   </p>
-                  {generatedCoupon && (
-                    <button 
-                      onClick={copyToClipboard}
-                      className="text-white/30 hover:text-white transition-colors"
-                      title="Copiar Cupom"
-                    >
-                      {copied ? <CheckCircle2 size={20} className="text-green-500" /> : <Copy size={20} />}
-                    </button>
-                  )}
                 </div>
-                <p className="text-[9px] text-gray-500 mt-3 uppercase tracking-widest font-bold">
-                  Tire uma foto ou apresente no caixa <br/> Desconto de 10% na Entrada!
-                </p>
-              </div>
+              ) : (
+                <div className="bg-[#151515] border border-orange-500/30 rounded-[2rem] p-6 shadow-[0_0_30px_rgba(249,115,22,0.15)] flex flex-col items-center w-full max-w-[320px] relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-orange-500 to-yellow-500" />
+                  
+                  <h3 className="text-xs font-black uppercase tracking-widest text-orange-500 mb-4">Benefício liberado</h3>
+                  
+                  <div className="w-36 h-36 bg-white rounded-2xl mb-4 p-2 flex items-center justify-center">
+                    <div className="w-full h-full border-2 border-dashed border-gray-300 rounded-xl flex items-center justify-center flex-col gap-1">
+                      <QrCode size={36} className="text-gray-300" />
+                      <span className="text-[8px] font-bold text-gray-400 uppercase tracking-wider text-center px-1">QR Code<br/>Em Breve</span>
+                    </div>
+                  </div>
+
+                  <div className="w-full bg-black/50 rounded-xl py-3 px-4 border border-white/5 flex items-center justify-between group">
+                    <p className="text-2xl font-black text-white tracking-widest font-mono select-all">
+                      {couponStatus === 'loading' ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 size={24} className="animate-spin text-orange-500" /> GERANDO
+                        </span>
+                      ) : generatedCoupon}
+                    </p>
+                    {couponStatus === 'success' && (
+                      <button 
+                        onClick={copyToClipboard}
+                        className="text-white/30 hover:text-white transition-colors"
+                        title="Copiar Cupom"
+                      >
+                        {copied ? <CheckCircle2 size={20} className="text-green-500" /> : <Copy size={20} />}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[9px] text-gray-500 mt-3 uppercase tracking-widest font-bold">
+                    Entrada promocional vinculada à sua pulseira <br/> Apresente este código na recepção
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="mb-4 w-full max-w-[280px] mx-auto">
               <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mb-4">
-                <div className="h-full bg-gradient-to-r from-orange-500 to-yellow-500 animate-progress-shrink origin-left w-full" style={{ animationDuration: '20s' }} />
+                <div className={`h-full animate-progress-shrink origin-left w-full ${couponStatus === 'error' ? 'bg-gradient-to-r from-red-500 to-rose-600' : 'bg-gradient-to-r from-orange-500 to-yellow-500'}`} style={{ animationDuration: '20s' }} />
               </div>
               <button 
                 onClick={resetToIdle}
@@ -577,7 +568,6 @@ export default function SurveyDisplay() {
         )}
       </AnimatePresence>
 
-      {/* ===================== OVERLAY MODAL (PULSEIRA) ===================== */}
       <AnimatePresence>
         {isBraceletModalOpen && (
           <motion.div

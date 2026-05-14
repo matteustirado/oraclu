@@ -1,48 +1,37 @@
 CREATE DATABASE IF NOT EXISTS oraclu_db;
 USE oraclu_db;
 
--- ==========================================
--- 1. USUÁRIOS E PERMISSÕES
--- ==========================================
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(50) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(20) NOT NULL, -- 'super', 'admin', 'adminsp', 'adminbh', 'surveysp', 'surveybh'
-    unit VARCHAR(10) NOT NULL, -- 'SP', 'BH', 'BOTH'
+    role VARCHAR(20) NOT NULL,
+    unit VARCHAR(10) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ==========================================
--- 2. PREDEFINIÇÕES (O Grupo de Perguntas)
--- ==========================================
 CREATE TABLE IF NOT EXISTS survey_presets (
     id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(100) NOT NULL,
-    unit VARCHAR(10) NOT NULL, -- 'SP', 'BH', 'BOTH'
+    unit VARCHAR(10) NOT NULL,
     is_active TINYINT(1) DEFAULT 0,
-    is_deleted TINYINT(1) DEFAULT 0, -- Soft Delete: 1 = apagado da interface, mas salvo no histórico
+    is_deleted TINYINT(1) DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ==========================================
--- 3. PERGUNTAS DINÂMICAS
--- ==========================================
 CREATE TABLE IF NOT EXISTS survey_questions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     preset_id INT NOT NULL,
+    page_number INT DEFAULT 1,
     question_text VARCHAR(255) NOT NULL,
-    question_type VARCHAR(50) NOT NULL, -- 'SCALE_10', 'YES_NO', 'EMOJI', 'THIS_THAT'
-    image_a_url VARCHAR(255), -- Usado apenas se for 'THIS_THAT'
-    image_b_url VARCHAR(255), -- Usado apenas se for 'THIS_THAT'
+    question_type VARCHAR(50) NOT NULL, 
+    image_a_url VARCHAR(255), 
+    image_b_url VARCHAR(255), 
     order_index INT DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (preset_id) REFERENCES survey_presets(id) ON DELETE CASCADE
 );
 
--- ==========================================
--- 4. A SESSÃO DE RESPOSTA DO CLIENTE
--- ==========================================
 CREATE TABLE IF NOT EXISTS survey_responses (
     id INT AUTO_INCREMENT PRIMARY KEY,
     preset_id INT NOT NULL,
@@ -52,22 +41,16 @@ CREATE TABLE IF NOT EXISTS survey_responses (
     FOREIGN KEY (preset_id) REFERENCES survey_presets(id)
 );
 
--- ==========================================
--- 5. OS VOTOS INDIVIDUAIS
--- ==========================================
 CREATE TABLE IF NOT EXISTS survey_answers (
     id INT AUTO_INCREMENT PRIMARY KEY,
     response_id INT NOT NULL,
     question_id INT NOT NULL,
-    answer_value VARCHAR(255) NOT NULL, -- Armazena '10', 'YES', 'SMILE_EMOJI', 'IMAGE_A'
+    answer_value VARCHAR(255) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (response_id) REFERENCES survey_responses(id) ON DELETE CASCADE,
     FOREIGN KEY (question_id) REFERENCES survey_questions(id)
 );
 
--- ==========================================
--- 6. VOUCHERS E ANTI-SPAM
--- ==========================================
 CREATE TABLE IF NOT EXISTS vouchers (
     id INT AUTO_INCREMENT PRIMARY KEY,
     client_code VARCHAR(50) NOT NULL UNIQUE,
@@ -76,12 +59,18 @@ CREATE TABLE IF NOT EXISTS vouchers (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ==========================================
--- 7. SEED DE USUÁRIOS INICIAIS
--- Nota Técnica: Estou inserindo as senhas puras aqui para facilitar o reset.
--- Quando formos programar o authController.js, eu farei uma trava que converte 
--- essas senhas para BCRYPT automaticamente no primeiro login.
--- ==========================================
+CREATE TABLE IF NOT EXISTS survey_coupons (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    unit VARCHAR(10) NOT NULL,
+    client_code VARCHAR(50) NOT NULL,
+    operation_date DATE NOT NULL,
+    legacy_coupon_id VARCHAR(50) NULL,
+    legacy_type INT NOT NULL DEFAULT 8,
+    status ENUM('pending', 'created', 'failed') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_coupon_per_client_day (unit, client_code, operation_date)
+);
+
 INSERT IGNORE INTO users (username, password_hash, role, unit) VALUES 
 ('super', 'superMatteus76', 'super', 'BOTH'),
 ('admin', 'adminjonas01', 'admin', 'BOTH'),
