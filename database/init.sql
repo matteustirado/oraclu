@@ -19,6 +19,18 @@ CREATE TABLE IF NOT EXISTS survey_presets (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- NOVA TABELA: Gerencia as Páginas, seus títulos e regras condicionais
+CREATE TABLE IF NOT EXISTS survey_pages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    preset_id INT NOT NULL,
+    page_number INT NOT NULL,
+    title VARCHAR(255) DEFAULT '',
+    is_conditional TINYINT(1) DEFAULT 0,
+    cond_question_id INT DEFAULT NULL,
+    cond_value VARCHAR(50) DEFAULT NULL,
+    FOREIGN KEY (preset_id) REFERENCES survey_presets(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS survey_questions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     preset_id INT NOT NULL,
@@ -36,6 +48,7 @@ CREATE TABLE IF NOT EXISTS survey_responses (
     id INT AUTO_INCREMENT PRIMARY KEY,
     preset_id INT NOT NULL,
     client_code VARCHAR(50) NOT NULL,
+    client_name VARCHAR(100) DEFAULT NULL, -- ADICIONADO: Nome real do cliente
     unit VARCHAR(10) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (preset_id) REFERENCES survey_presets(id)

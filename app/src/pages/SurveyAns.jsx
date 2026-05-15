@@ -4,7 +4,7 @@ import { toast } from 'react-toastify'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   ArrowLeft, Calendar, FileText, ChevronRight, 
-  Users, Clock, MessageSquare, SearchX, MapPin 
+  Users, Clock, MessageSquare, SearchX, MapPin, Tag 
 } from 'lucide-react'
 
 import api from '../services/api'
@@ -31,7 +31,6 @@ export default function SurveyAns() {
     } catch { return 'admin' }
   })
 
-  // Se o usuário é regional, trava na unidade dele. Se for super/admin master, pode ver "TODOS".
   const initialUnitFilter = ['super', 'admin'].includes(userRole) ? 'TODOS' : 
     (localStorage.getItem('oraclu_user') ? JSON.parse(localStorage.getItem('oraclu_user')).unit : 'SP')
 
@@ -48,11 +47,8 @@ export default function SurveyAns() {
   const fetchSurveys = useCallback(async () => {
     setIsLoading(true)
     try {
-      // Se selecionou 'TODOS', mandamos o parâmetro unit em branco ou um coringa se sua API preferir
-      const unitParam = selectedUnit === 'TODOS' ? '' : selectedUnit
-      
       const res = await api.get('/api/survey/reports/summary', {
-        params: { unit: unitParam, month: selectedMonth, year: selectedYear }
+        params: { unit: selectedUnit, month: selectedMonth, year: selectedYear }
       })
       setSurveys(res.data || [])
     } catch (error) {
@@ -70,9 +66,8 @@ export default function SurveyAns() {
     setSelectedSurvey(survey)
     setIsLoadingResponses(true)
     try {
-      const unitParam = selectedUnit === 'TODOS' ? '' : selectedUnit
       const res = await api.get(`/api/survey/reports/details/${survey.id}`, {
-        params: { unit: unitParam, month: selectedMonth, year: selectedYear }
+        params: { unit: selectedUnit, month: selectedMonth, year: selectedYear }
       })
       setResponses(res.data || [])
     } catch (error) {
@@ -98,7 +93,6 @@ export default function SurveyAns() {
         animate={{ opacity: 1 }}
         className="relative mx-auto flex h-[calc(100vh-5rem)] w-full max-w-[1500px] flex-col overflow-hidden px-2 pb-2 pt-3 md:h-[calc(100vh-5rem)] md:px-0 md:pb-0 md:pt-3"
       >
-        {/* HEADER */}
         <div className="mb-2 flex shrink-0 items-center justify-between gap-4 md:mb-3">
           <div className="flex items-center gap-3 md:gap-4">
             <h1 className="text-xl font-black tracking-tight text-white md:text-2xl">
@@ -116,10 +110,8 @@ export default function SurveyAns() {
           </button>
         </div>
 
-        {/* WORKSPACE - Altura travada, sem scroll de página inteira */}
         <div className="liquid-glass relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[2rem] border border-purple-500/20 bg-black/20 shadow-2xl backdrop-blur-md p-3 md:p-4 mb-2 md:mb-3">
           
-          {/* BARRA DE FILTROS */}
           <div className="relative z-10 mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
             <div className="flex items-center gap-2 w-full md:w-auto bg-black/40 rounded-xl p-1 border border-white/5">
               <div className="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center shrink-0">
@@ -151,7 +143,6 @@ export default function SurveyAns() {
               </select>
             </div>
 
-            {/* Filtro de Unidade (Só aparece se o usuário for super/admin master) */}
             {['super', 'admin'].includes(userRole) && (
               <div className="flex items-center gap-2 w-full md:w-auto bg-black/40 rounded-xl p-1 border border-white/5">
                 <div className="w-8 h-8 rounded-lg bg-fuchsia-500/20 text-fuchsia-400 flex items-center justify-center shrink-0">
@@ -174,11 +165,9 @@ export default function SurveyAns() {
             )}
           </div>
 
-          {/* ÁREA DE CONTEÚDO DINÂMICO (Lista ou Respostas) */}
           <div className="relative min-h-0 flex-1 w-full">
             <AnimatePresence mode="wait">
               {!selectedSurvey ? (
-                // LISTAGEM DE FORMULÁRIOS
                 <motion.div 
                   key="list"
                   initial={{ opacity: 0, x: -20 }}
@@ -250,7 +239,6 @@ export default function SurveyAns() {
                   )}
                 </motion.div>
               ) : (
-                // EXIBIÇÃO DE RESPOSTAS DETALHADAS
                 <motion.div 
                   key="details"
                   initial={{ opacity: 0, x: 20 }}
@@ -288,9 +276,19 @@ export default function SurveyAns() {
                         {responses.map((resp, idx) => (
                           <div key={idx} className="bg-black/50 border border-white/10 rounded-xl p-4 relative">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 pb-3 border-b border-white/5">
-                              <div className="flex items-center gap-2 text-purple-300">
-                                <Users size={14} />
-                                <span className="text-[10px] font-black uppercase tracking-widest">{resp.client_code}</span>
+                              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                                <div className="flex items-center gap-2 text-purple-300">
+                                  <Users size={14} />
+                                  <span className="text-[10px] font-black uppercase tracking-widest truncate max-w-[150px] sm:max-w-full">
+                                    {resp.client_name} <span className="text-white/30">({resp.client_code})</span>
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1 text-yellow-500/90 bg-yellow-500/10 px-2 py-0.5 rounded-md border border-yellow-500/20 w-max">
+                                  <Tag size={10} />
+                                  <span className="text-[9px] font-black tracking-widest uppercase">
+                                    Cupom: {resp.coupon}
+                                  </span>
+                                </div>
                               </div>
                               <div className="flex items-center gap-2 text-white/40">
                                 <Clock size={12} />

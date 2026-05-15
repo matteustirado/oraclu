@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CheckCircle2, AlertCircle, QrCode, Tag, X, Loader2, Copy } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Tag, X, Loader2 } from 'lucide-react'
 import api from '../services/api'
 import { socket } from '../socket'
 
@@ -43,7 +43,6 @@ export default function SurveyDisplay() {
   
   const [couponStatus, setCouponStatus] = useState('loading')
   const [generatedCoupon, setGeneratedCoupon] = useState(null)
-  const [copied, setCopied] = useState(false)
 
   const [exitClicks, setExitClicks] = useState(0)
   const idleTimerRef = useRef(null)
@@ -130,25 +129,40 @@ export default function SurveyDisplay() {
 
     const isValid = await validateCustomer(bracelet)
 
-    setIsValidatingBracelet(false)
-
     if (isValid) {
       if (navigator.vibrate) navigator.vibrate(50)
-      
       const parsedClientCode = bracelet.trim().toUpperCase()
       
-      api.post('/api/survey/prepare', { unit: currentUnit, client_code: parsedClientCode }).catch(() => {})
+      try {
+        const prepRes = await api.post('/api/survey/prepare', { unit: currentUnit, client_code: parsedClientCode })
+        if (prepRes.data && prepRes.data.status === 'created' && prepRes.data.coupon) {
+          setGeneratedCoupon(prepRes.data.coupon)
+          setCouponStatus('success')
+          setClientCode(parsedClientCode)
+          setIsBraceletModalOpen(false)
+          setBracelet('')
+          setIsValidatingBracelet(false)
+          setViewState('success')
+          
+          if (successTimerRef.current) clearTimeout(successTimerRef.current)
+          successTimerRef.current = setTimeout(() => {
+            resetToIdle()
+          }, 20000)
+          return
+        }
+      } catch (err) {}
 
       setAnswers({})
       setCurrentPageIndex(0)
       setGeneratedCoupon(null)
       setCouponStatus('loading')
-      setCopied(false)
       setClientCode(parsedClientCode)
       setIsBraceletModalOpen(false)
       setBracelet('')
+      setIsValidatingBracelet(false)
       setViewState('survey')
     } else {
+      setIsValidatingBracelet(false)
       setBraceletError(true)
       if (navigator.vibrate) navigator.vibrate([100, 50, 100])
       setTimeout(() => setBraceletError(false), 2000)
@@ -166,7 +180,6 @@ export default function SurveyDisplay() {
     setBraceletError(false)
     setGeneratedCoupon(null)
     setCouponStatus('loading')
-    setCopied(false)
   }, [])
 
   const resetIdleTimer = useCallback(() => {
@@ -236,6 +249,26 @@ export default function SurveyDisplay() {
     }
   }, [answers, clientCode, config, currentUnit, resetToIdle])
 
+  // --- O CÉREBRO DA LÓGICA CONDICIONAL (SKIP LOGIC) ---
+  const evaluateCondition = useCallback((page, currentAnswers) => {
+    if (!page.isConditional || !page.condQuestionId || !page.condValue) return true;
+    
+    const userAns = currentAnswers[page.condQuestionId];
+    if (userAns === undefined) return false;
+
+    if (page.condValue === 'BAD') {
+      return (Number(userAns) >= 0 && Number(userAns) <= 3) || ['😡', '😕'].includes(userAns);
+    }
+    if (page.condValue === 'NEUTRAL') {
+      return (Number(userAns) >= 4 && Number(userAns) <= 7) || userAns === '😐';
+    }
+    if (page.condValue === 'GOOD') {
+      return (Number(userAns) >= 8 && Number(userAns) <= 10) || ['🙂', '😍'].includes(userAns);
+    }
+    
+    return String(userAns) === String(page.condValue);
+  }, []);
+
   useEffect(() => {
     if (viewState !== 'survey' || !config) return
 
@@ -246,24 +279,30 @@ export default function SurveyDisplay() {
 
     if (allAnswered) {
       const timer = setTimeout(() => {
-        const isLastPage = currentPageIndex === (config.pages.length - 1)
-        if (isLastPage) {
-          submitSurvey()
-        } else {
-          setCurrentPageIndex(prev => prev + 1)
+        
+        // Em vez de só +1, o motor tenta achar a próxima página válida
+        let nextIndex = currentPageIndex + 1;
+        let foundValidPage = false;
+
+        while (nextIndex < config.pages.length) {
+          if (evaluateCondition(config.pages[nextIndex], answers)) {
+            foundValidPage = true;
+            break;
+          }
+          nextIndex++;
         }
+
+        if (foundValidPage) {
+          setCurrentPageIndex(nextIndex)
+        } else {
+          submitSurvey() // Se não achou página válida (ou acabaram), envia.
+        }
+
       }, 600)
       return () => clearTimeout(timer)
     }
-  }, [answers, currentPageIndex, config, viewState, submitSurvey])
+  }, [answers, currentPageIndex, config, viewState, submitSurvey, evaluateCondition])
 
-
-  const copyToClipboard = () => {
-    if (!generatedCoupon) return
-    navigator.clipboard.writeText(generatedCoupon)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
 
   const renderQuestionInput = (question) => {
     const currentValue = answers[question.id]
@@ -455,7 +494,7 @@ export default function SurveyDisplay() {
           >
             <div className="pt-6 pb-4 px-6 sm:px-10 text-center shrink-0 border-b border-white/5">
               <h1 className="text-xl md:text-2xl font-black uppercase text-transparent bg-clip-text bg-gradient-to-r from-orange-500 to-yellow-400 leading-tight drop-shadow-md">
-                {config.title}
+                {config.pages[currentPageIndex]?.title || config.title}
               </h1>
               <div className="flex justify-center gap-2 mt-3">
                 {config.pages.map((_, idx) => (
@@ -498,58 +537,67 @@ export default function SurveyDisplay() {
               borderRadius: '2.5rem' 
             }}
           >
-            <div className="mt-4">
+            <div className="mt-4 mb-4">
               <h1 className={`text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r mb-1 drop-shadow-sm uppercase ${couponStatus === 'error' ? 'from-red-400 to-rose-600' : 'from-green-400 to-emerald-600'}`}>
                 {couponStatus === 'error' ? 'AVALIAÇÃO SALVA' : 'ISSO AÍ!'}
               </h1>
-              <p className="text-base sm:text-lg text-gray-400 font-medium">Sua avaliação foi registrada.</p>
+              <p className="text-base sm:text-lg text-gray-400 font-medium">
+                {couponStatus === 'error' ? 'Sua avaliação foi registrada.' : 'BOA! Seu cupom está pronto.'}
+              </p>
             </div>
 
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 my-4">
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 my-2">
               {couponStatus === 'error' ? (
                 <div className="bg-[#151515] border border-red-500/50 rounded-[2rem] p-6 shadow-[0_0_30px_rgba(225,29,72,0.2)] flex flex-col items-center w-full max-w-[320px] relative overflow-hidden">
                   <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-red-500 to-rose-600" />
                   <AlertCircle size={48} className="text-red-500 mb-4" />
                   <h3 className="text-lg font-black uppercase tracking-widest text-red-500 mb-2">Sistema Indisponível</h3>
                   <p className="text-xs text-gray-400 font-bold uppercase tracking-widest text-center px-2">
-                    Não foi possível emitir seu VIP digital. Por favor, avise a recepção apresentando esta tela.
+                    Não foi possível emitir seu cupom digital. Por favor, avise a recepção apresentando esta tela.
                   </p>
                 </div>
               ) : (
-                <div className="bg-[#151515] border border-orange-500/30 rounded-[2rem] p-6 shadow-[0_0_30px_rgba(249,115,22,0.15)] flex flex-col items-center w-full max-w-[320px] relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-orange-500 to-yellow-500" />
-                  
-                  <h3 className="text-xs font-black uppercase tracking-widest text-orange-500 mb-4">Benefício liberado</h3>
-                  
-                  <div className="w-36 h-36 bg-white rounded-2xl mb-4 p-2 flex items-center justify-center">
-                    <div className="w-full h-full border-2 border-dashed border-gray-300 rounded-xl flex items-center justify-center flex-col gap-1">
-                      <QrCode size={36} className="text-gray-300" />
-                      <span className="text-[8px] font-bold text-gray-400 uppercase tracking-wider text-center px-1">QR Code<br/>Em Breve</span>
+                <div className="relative bg-[#151515] rounded-2xl w-full max-w-[320px] mx-auto overflow-hidden shadow-[0_10px_40px_rgba(249,115,22,0.15)] border border-orange-500/30 flex flex-col items-center">
+                  <div className="absolute top-[50%] -left-4 w-8 h-8 bg-[#0a0a0a] rounded-full translate-y-[-50%] border-r border-orange-500/30"></div>
+                  <div className="absolute top-[50%] -right-4 w-8 h-8 bg-[#0a0a0a] rounded-full translate-y-[-50%] border-l border-orange-500/30"></div>
+
+                  <div className="w-full p-6 pb-8 border-b-2 border-dashed border-white/10 flex flex-col items-center relative">
+                    <h3 className="text-[10px] font-black uppercase tracking-widest text-white/40 mb-6">Descontão de retorno</h3>
+                    <div className="w-24 h-auto mb-2 opacity-90">
+                      <svg viewBox="0 0 600 485" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                          <linearGradient id="ticket-logo-gradient" x1="0%" y1="100%" x2="0%" y2="0%">
+                            <stop offset="0%" stopColor="#FF4D00" />
+                            <stop offset="100%" stopColor="#FFCC00" />
+                          </linearGradient>
+                        </defs>
+                        <g fill="url(#ticket-logo-gradient)">
+                          <path d="M276 41.3c-12.4 19.9-79.5 127.5-149.2 239.1C57 392 0 483.7 0 484.2s8.4.7 18.7.6l18.6-.3L168.2 275C240.1 159.8 299.5 65.5 300 65.5c.6 0 59.9 94.3 131.9 209.5l130.8 209.5 18.8.3c15.1.2 18.6 0 18.3-1.1-.2-.7-67.3-108.7-149.3-240C359.6 98.2 300.9 5.1 300 5.1c-.9 0-10.6 14.7-24 36.2z" />
+                          <path d="M175.2 284.4C107.5 393 51.7 482.6 51.4 483.4c-.6 1.5 22.5 1.6 248.5 1.6 137 0 249.1-.2 249.1-.5 0-1.1-6.1-11.4-7.4-12.4-.8-.7-10.1-1.2-25.1-1.3l-23.8-.3-13.2-21c-7.2-11.6-50.1-80.3-95.4-152.8C324.5 201.4 301.3 165 300 165c-1.3 0-26.8 40-92.4 145.1-49.8 79.7-90.6 145.7-90.6 146.5 0 1.2 2 1.4 12.3 1.2l12.2-.3 78.7-126c43.3-69.3 79.1-126.1 79.6-126.3.7-.2 62 97.1 156 248l11.1 17.8H275l-.2-24.7-.3-24.8-12.2-.5-12.1-.5 23.1-37c12.8-20.4 24.1-38.5 25.3-40.3l2.1-3.3 23.8 38.3c13.1 21.1 24.5 39.4 25.4 40.7l1.5 2.3-7.1-.7c-10.6-1-11.3-.4-11.3 9.9 0 6.7.3 8.5 1.6 9 .9.3 11.7.6 24 .6H381v-2.4c0-1.4-15.8-27.7-39.3-65.3-29.7-47.6-39.7-62.8-41.2-62.8-1.4 0-11.4 15.2-41.2 63-21.6 34.6-39.3 64-39.3 65.2v2.3h37.9l.6 4.2c.3 2.4.5 9.2.3 15.3l-.3 11-41.3.3-41.3.2 2.3-3.8C189.3 448.8 299.6 273 300.1 273c.3 0 26.5 41.6 58.3 92.5l57.7 92.5h10c8.1 0 9.9-.3 9.9-1.5 0-.8-30.2-49.9-67.1-109.1-53.5-85.6-67.5-107.4-69-107.2-1.3.2-25.4 38-73.7 115.3l-71.9 115-32.1.3-32.1.2 39.8-63.7c22-35.1 69-110.4 104.5-167.3 35.6-56.9 65.1-103.5 65.6-103.5s46.1 72.2 101.2 160.5l100.3 160.5 14.9.3 14.8.3-.4-2.3C530.1 451.9 301.7 87 300 87c-.9 0-49.9 77.5-124.8 197.4z" />
+                        </g>
+                      </svg>
                     </div>
                   </div>
 
-                  <div className="w-full bg-black/50 rounded-xl py-3 px-4 border border-white/5 flex items-center justify-between group">
-                    <p className="text-2xl font-black text-white tracking-widest font-mono select-all">
-                      {couponStatus === 'loading' ? (
-                        <span className="flex items-center gap-2">
-                          <Loader2 size={24} className="animate-spin text-orange-500" /> GERANDO
-                        </span>
-                      ) : generatedCoupon}
-                    </p>
-                    {couponStatus === 'success' && (
-                      <button 
-                        onClick={copyToClipboard}
-                        className="text-white/30 hover:text-white transition-colors"
-                        title="Copiar Cupom"
-                      >
-                        {copied ? <CheckCircle2 size={20} className="text-green-500" /> : <Copy size={20} />}
-                      </button>
+                  <div className="w-full p-8 bg-gradient-to-b from-white/5 to-transparent flex flex-col items-center">
+                    {couponStatus === 'loading' ? (
+                      <div className="flex flex-col items-center">
+                        <Loader2 size={32} className="animate-spin text-orange-500 mb-2" />
+                        <span className="text-[10px] font-bold tracking-widest text-white/50 uppercase">Processando...</span>
+                      </div>
+                    ) : (
+                      <p className="text-5xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-br from-orange-400 to-yellow-500 tracking-wider font-mono drop-shadow-[0_0_20px_rgba(249,115,22,0.5)]">
+                        {generatedCoupon}
+                      </p>
                     )}
                   </div>
-                  <p className="text-[9px] text-gray-500 mt-3 uppercase tracking-widest font-bold">
-                    Entrada promocional vinculada à sua pulseira <br/> Apresente este código na recepção
-                  </p>
                 </div>
+              )}
+              
+              {couponStatus === 'success' && (
+                <p className="text-[10px] text-gray-400 mt-2 uppercase tracking-widest font-bold px-4 leading-relaxed">
+                  Apresente este número na recepção <br/> para validar sua entrada promocional
+                </p>
               )}
             </div>
 

@@ -8,8 +8,20 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
+      devOptions: {
+        enabled: true
+      },
+      manifest: {
+        name: 'Oraclu App',
+        short_name: 'Oraclu',
+        theme_color: '#050505',
+        background_color: '#050505',
+        display: 'standalone',
+        orientation: 'portrait'
+      },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,webp}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,json}'],
+        navigateFallbackDenylist: [/^\/api/],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/apioraclu\.dedalosbar\.com\/assets\/.*/i,
@@ -18,7 +30,7 @@ export default defineConfig({
               cacheName: 'oraclu-api-assets',
               expiration: {
                 maxEntries: 500,
-                maxAgeSeconds: 60 * 60 * 24 * 30
+                maxAgeSeconds: 2592000
               },
               cacheableResponse: {
                 statuses: [0, 200]
@@ -36,6 +48,9 @@ export default defineConfig({
     allowedHosts: [
       'oraclu.dedalosbar.com',
       'localhost'
-    ]
+    ],
+    watch: {
+      usePolling: true
+    }
   }
 })
